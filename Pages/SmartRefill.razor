@@ -1,0 +1,1286 @@
+@page "/smart-refill"
+@using System.Collections.ObjectModel
+@using System.ComponentModel
+@using SmartRefillWasm.Models
+@using SmartRefillWasm.Services
+@using OfficeOpenXml
+@using System.Drawing
+@inject IRefillCalculationService CalculationService
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>智能补货计算系统</PageTitle>
+
+<div class="container-fluid px-1">
+    <!-- 页面标题 -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="text-primary mb-0">🚀 智能补货计算系统</h3>
+        <div class="form-check form-switch d-flex align-items-center">
+            <input class="form-check-input" type="checkbox" id="debugSwitch" @bind="ShowDebugInfo">
+            <label class="form-check-label text-muted small ms-2" for="debugSwitch">🔍调试信息</label>
+        </div>
+    </div>
+
+    <!-- 调试信息面板 -->
+    @if (ShowDebugInfo)
+    {
+        <div class="card bg-light border-info mb-4">
+            <div class="card-header bg-info text-white py-2">
+                <h6 class="mb-0">🔍 调试信息面板</h6>
+            </div>
+            <div class="card-body py-2">
+                <div class="row text-small">
+                    <div class="col-md-6">
+                        <small>
+                            <strong>按钮状态:</strong><br>
+                            • CanDetectMachines: @(transactionFile != null)<br>
+                            • HasMachines: @MachineRefillSettings.Any()<br>
+                            • CanCalculate: @(MachineRefillSettings.Any() && !IsLoading)<br>
+                            • IsCalculating: @IsLoading<br>
+                            • 检测到机器数: @MachineRefillSettings.Count
+                        </small>
+                    </div>
+                    <div class="col-md-6">
+                        <small>
+                            <strong>文件状态:</strong><br>
+                            • 交易文件: @(transactionFile?.Name ?? "未选择")<br>
+                            • 补货历史: @(refillHistoryFile?.Name ?? "未选择")<br>
+                            • 数据大小: @(transactionFile?.Size.ToString("N0") ?? "0") bytes
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- 文件上传区域 -->
+    <div class="card shadow mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="card-title text-primary mb-0">📁 数据输入</h4>
+                <button class="btn btn-outline-secondary btn-sm" @onclick="ResetAll">
+                    🔄 重置
+                </button>
+            </div>
+            
+            <!-- 帮助信息 -->
+            <div class="alert alert-info mb-4">
+                <h6 class="alert-heading">💡 使用说明</h6>
+                <ul class="mb-0">
+                    <li>交易记录文件：必选，Excel格式 (.xlsx, .xls)</li>
+                    <li>补货历史文件：可选，如果上传则自动计算补货时间</li>
+                    <li>如不上传补货历史文件，需手动设置各机器的补货时间</li>
+                </ul>
+            </div>
+
+            
+            <!-- Transaction文件上传 -->
+            <div class="mb-4">
+                <label class="form-label fw-bold">1️⃣ 交易记录文件 <span class="text-danger">*</span></label>
+                <div class="input-group">
+                    <InputFile class="form-control" id="transactionFile" 
+                              accept=".xlsx,.xls" OnChange="OnTransactionFileSelected" />
+                    <span class="input-group-text">
+                        @if (transactionFile != null)
+                        {
+                            <span class="text-success">✅ 已上传</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">📁 选择文件</span>
+                        }
+                    </span>
+                </div>
+                <div class="form-text text-success">
+                    @if (transactionFile != null)
+                    {
+                        <span>✅ 已上传：@transactionFile.Name</span>
+                    }
+                    else
+                    {
+                        <span class="text-muted">请选择交易记录文件</span>
+                    }
+                </div>
+            </div>
+
+            <!-- RefillHistory文件上传 -->
+            <div class="mb-4">
+                <label class="form-label fw-bold">2️⃣ 补货历史文件 <span class="text-muted">(可选)</span></label>
+                <div class="input-group">
+                    <InputFile class="form-control" id="refillHistoryFile" 
+                              accept=".xlsx,.xls" OnChange="OnRefillHistoryFileSelected" />
+                    <span class="input-group-text">
+                        @if (refillHistoryFile != null)
+                        {
+                            <span class="text-success">✅ 已上传</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">📁 可选文件</span>
+                        }
+                    </span>
+                </div>
+                <div class="form-text text-muted">
+                    @if (refillHistoryFile != null)
+                    {
+                        <span>✅ 已上传：@refillHistoryFile.Name</span>
+                    }
+                    else
+                    {
+                        <span>可选择补货历史文件（自动计算补货时间）</span>
+                    }
+                </div>
+            </div>
+
+            <!-- 机器检测按钮 -->
+            <div class="text-center mb-4">
+                <button class="btn btn-warning btn-lg" @onclick="DetectMachines" disabled="@(transactionFile == null || IsLoading)">
+                    🔍 3️⃣ 检测机器
+                </button>
+                <div class="form-text text-muted mt-2">
+                    @if (transactionFile == null)
+                    {
+                        <span>请先上传交易记录文件</span>
+                    }
+                    else
+                    {
+                    <span>点击检测交易记录中的机器信息</span>
+                    }
+                </div>
+            </div>
+                </div>
+            </div>
+            
+    <!-- 机器检测结果 -->
+    @if (MachineRefillSettings.Any())
+            {
+                <div class="alert alert-success mb-4">
+            <h6 class="alert-heading">✅ 检测到 @MachineRefillSettings.Count 台机器</h6>
+                    <div class="row">
+                @foreach (var machine in MachineRefillSettings)
+                        {
+                            <div class="col-md-4 col-sm-6">
+                        <span class="badge bg-primary me-2">@machine.MachineName</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+    }
+
+    <!-- 状态消息 -->
+    @if (!string.IsNullOrEmpty(StatusMessage))
+    {
+        <div class="alert @(StatusMessageClass.Contains("danger") ? "alert-danger" : "alert-success") alert-dismissible">
+            @StatusMessage
+            <button type="button" class="btn-close" @onclick="() => StatusMessage = string.Empty"></button>
+        </div>
+    }
+
+    <!-- 补货时间设置 -->
+    @if (MachineRefillSettings.Any())
+    {
+                <div class="mb-4">
+                    <div class="card border-warning">
+                        <div class="card-header bg-warning text-dark">
+                            <h5 class="mb-0">4️⃣ 设置补货时间 <span class="text-danger">*</span></h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <span>📅 请设置每台机器的上次补货时间：</span>
+                                <div>
+                            @if (refillHistoryFile != null)
+                                    {
+                                <button class="btn btn-info btn-sm me-2" @onclick="ApplyHistoryTimes">
+                                            🔄 重新应用历史时间
+                                        </button>
+                                    }
+                                    <div class="btn-group" role="group">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" 
+                                        @onclick="() => SetAllTime(9, 0, 0)">
+                                            9:00
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" 
+                                        @onclick="() => SetAllTime(12, 0, 0)">
+                                            12:00
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" 
+                                        @onclick="() => SetAllTime(18, 0, 0)">
+                                            18:00
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            @foreach (var setting in MachineRefillSettings)
+                            {
+                                <div class="card bg-light mb-2">
+                                    <div class="card-body py-2">
+                                        <div class="row align-items-center">
+                                            <div class="col-md-3">
+                                                <strong class="text-primary">@setting.MachineName</strong>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label small">日期</label>
+                                                <input type="date" class="form-control form-control-sm" 
+                                                       @bind="setting.RefillDate" 
+                                                       @bind:format="yyyy-MM-dd" />
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label small">时间</label>
+                                        <input type="time" class="form-control form-control-sm" 
+                                               step="1" @bind="setting.RefillTimeAsTimeOnly" />
+                                                <div class="form-text">
+                                            <small class="text-success">✅ @setting.RefillTimeAsTimeOnly.ToString("HH:mm:ss")</small>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-1">
+                                                <div class="mt-4">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm">
+                                                        🕘
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+
+    <!-- 计算完成提示 -->
+    @if (CalculationResults.Any())
+    {
+        <div class="alert alert-success mb-4">
+            ✅ 计算完成！共 @CalculationResults.Count 种产品需要补货
+                    </div>
+                }
+                
+    <!-- 计算按钮 -->
+    <div class="text-center mb-4">
+        <button class="btn btn-success btn-lg px-5" 
+                @onclick="CalculateRefillQuantities" 
+                disabled="@(!MachineRefillSettings.Any() || IsLoading)">
+            @if (IsLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                <span>5️⃣ 📊 开始计算</span>
+                    }
+                    else
+                    {
+                        <span>5️⃣ 📊 开始计算</span>
+                    }
+                </button>
+    </div>
+
+    <!-- 计算结果表格 -->
+    @if (CalculationResults.Any())
+    {
+        <div class="card shadow mb-4">
+            <div class="card-body px-2 px-md-3">
+                <div class="d-flex justify-content-between align-items-start mb-4">
+                    <h3 class="card-title text-primary mb-0">📊 补货计算结果</h3>
+                    <div class="d-flex flex-column gap-2">
+                        <button class="btn btn-outline-success btn-sm" @onclick="CopyTableToClipboard">
+                            📋 复制结果
+                        </button>
+                        <button class="btn btn-outline-primary btn-sm" @onclick="ExportToExcel">
+                            📤 导出表格
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 统计卡片 -->
+                <div class="row mb-4">
+                    <div class="col-md-3 mb-3">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body text-center bg-primary bg-gradient text-white rounded">
+                                <div class="d-flex align-items-center justify-content-center mb-2">
+                                    <i class="bi bi-box-seam fs-2 me-2"></i>
+                                    <h2 class="mb-0 fw-bold">@CalculationResults.Sum(r => r.TotalSales)</h2>
+                            </div>
+                                <p class="mb-0 fs-6 fw-medium">基础补货</p>
+                                <small class="opacity-75">根据销售数据计算</small>
+                        </div>
+                    </div>
+                            </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body text-center bg-warning bg-gradient text-dark rounded">
+                                <div class="d-flex align-items-center justify-content-center mb-2">
+                                    <i class="bi bi-gear fs-2 me-2"></i>
+                                    <h2 class="mb-0 fw-bold">@CalculationResults.Sum(r => r.SmartAdjustment)</h2>
+                        </div>
+                                <p class="mb-0 fs-6 fw-medium">智能调整</p>
+                                <small class="opacity-75">基于调整率优化</small>
+                    </div>
+                            </div>
+                        </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body text-center bg-info bg-gradient text-white rounded">
+                                <div class="d-flex align-items-center justify-content-center mb-2">
+                                    <i class="bi bi-pencil-square fs-2 me-2"></i>
+                                    <h2 class="mb-0 fw-bold">@CalculationResults.Sum(r => r.ManualAdjustment)</h2>
+                    </div>
+                                <p class="mb-0 fs-6 fw-medium">手动调整</p>
+                                <small class="opacity-75">人工干预修正</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body text-center bg-success bg-gradient text-white rounded">
+                                <div class="d-flex align-items-center justify-content-center mb-2">
+                                    <i class="bi bi-check-circle fs-2 me-2"></i>
+                                    <h2 class="mb-0 fw-bold">@CalculationResults.Sum(r => r.FinalRecommendation)</h2>
+                                </div>
+                                <p class="mb-0 fs-6 fw-medium">总计补货</p>
+                                <small class="opacity-75">最终推荐数量</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 放大控制 -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">📊 补货计算结果</h5>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ChangeFontSize(-0.1)">🔍-</button>
+                        <span class="badge bg-light text-dark">@($"{currentFontSize:P0}")</span>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ChangeFontSize(0.1)">🔍+</button>
+                    </div>
+                </div>
+
+                <!-- 补货计算结果表格 -->
+                <div style="transform: scale(@currentFontSize); transform-origin: top left; width: @(100/currentFontSize)%;">
+                    <table class="table table-striped table-hover align-middle" style="margin: 0; font-size: 0.9rem;">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="px-2 py-2" style="width: 25%;">产品</th>
+                                <th class="text-center px-1 py-2" style="width: 11%;">基础</th>
+                                <th class="text-center px-1 py-2" style="width: 11%;">智能</th>
+                                <th class="text-center px-1 py-2" style="width: 13%;">手动</th>
+                                <th class="text-center px-1 py-2" style="width: 11%;">总计</th>
+                                <th class="text-center px-1 py-2" style="width: 14.5%;">箱数</th>
+                                <th class="text-center px-1 py-2" style="width: 14.5%;">余件</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var result in CalculationResults)
+                            {
+                                var isOverCapacity = (result.TotalSales + result.SmartAdjustment + result.ManualAdjustment) > result.MaxCapacity;
+                                <tr class="@(isOverCapacity ? "table-danger" : "")">
+                                    <td class="px-2 py-2" style="line-height: 1.2;">
+                                        <div class="fw-bold text-dark" style="font-size: 0.85rem;">@result.ProductName</div>
+                                        @if (result.MaxCapacity > 0)
+                                        {
+                                            <div class="text-muted" style="font-size: 0.72rem;">Max: @result.MaxCapacity</div>
+                                            <div class="text-muted" style="font-size: 0.72rem;">@result.BoxSize 件/箱</div>
+                                        }
+                                    </td>
+                                    <td class="text-center px-1 py-2">
+                                        <span class="badge bg-primary d-block mx-auto" style="font-size: 0.8rem; min-width: 35px;">@result.TotalSales</span>
+                                    </td>
+                                    <td class="text-center px-1 py-2">
+                                        <span class="badge @(result.SmartAdjustment < 0 ? "bg-danger text-white" : "bg-warning text-dark") d-block mx-auto" style="font-size: 0.8rem; min-width: 35px;">@result.SmartAdjustment</span>
+                                    </td>
+                                    <td class="text-center px-1 py-2">
+                                        <div class="d-flex flex-column align-items-center">
+                                            <input type="number" class="form-control text-center fw-bold" 
+                                                   value="@(result.ManualAdjustment == 0 ? "" : result.ManualAdjustment.ToString())" 
+                                                   placeholder="0"
+                                                   @oninput="@(e => OnManualAdjustmentChanged(result, e))" 
+                                                   style="font-size: 0.8rem; width: 45px; height: 30px; padding: 3px; border: 2px solid @(isOverCapacity ? "#dc3545" : "#0d6efd");" />
+                                            @if (isOverCapacity)
+                                            {
+                                                <span class="text-danger mt-1" style="font-size: 0.7rem;">⚠️</span>
+                                            }
+                                        </div>
+                                    </td>
+                                    <td class="text-center px-1 py-2">
+                                        <span class="badge bg-success d-block mx-auto" style="font-size: 0.8rem; min-width: 35px;">@result.FinalRecommendation</span>
+                                    </td>
+                                    <td class="text-center px-1 py-2">
+                                        <span class="badge bg-dark d-block mx-auto" style="font-size: 0.8rem; min-width: 35px;">@result.BoxesToTake</span>
+                                    </td>
+                                    <td class="text-center px-1 py-2">
+                                        <span class="badge bg-secondary d-block mx-auto" style="font-size: 0.8rem; min-width: 35px;">@result.RemainingPieces</span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private IBrowserFile? transactionFile = null;
+    private IBrowserFile? refillHistoryFile = null;
+    private ObservableCollection<MachineRefillSetting> MachineRefillSettings = new();
+    private ObservableCollection<RefillCalculationResult> CalculationResults = new();
+    
+    private bool IsLoading = false;
+    private bool ShowDebugInfo = false;
+    private string StatusMessage = "";
+    private string StatusMessageClass = "";
+    
+    // 放大功能
+    private double currentFontSize = 0.9;
+    
+    private void ChangeFontSize(double delta)
+    {
+        currentFontSize = Math.Max(0.5, Math.Min(2.0, currentFontSize + delta));
+        StateHasChanged();
+    }
+
+    protected override void OnInitialized()
+    {
+        // 订阅机器设置的属性更改通知
+        MachineRefillSettings.CollectionChanged += (s, e) =>
+        {
+            if (e.NewItems != null)
+            {
+                foreach (MachineRefillSetting item in e.NewItems)
+                {
+                    item.PropertyChanged += (sender, args) => InvokeAsync(StateHasChanged);
+                }
+            }
+        };
+        
+        // 订阅计算结果的属性更改通知
+        CalculationResults.CollectionChanged += (s, e) =>
+        {
+            if (e.NewItems != null)
+            {
+                foreach (RefillCalculationResult item in e.NewItems)
+                {
+                    item.PropertyChanged += (sender, args) => InvokeAsync(StateHasChanged);
+                }
+            }
+        };
+    }
+
+    private void OnTransactionFileSelected(InputFileChangeEventArgs e)
+    {
+        transactionFile = e.File;
+        SetStatus($"已选择交易记录文件: {transactionFile.Name}", true);
+    }
+
+    private void OnRefillHistoryFileSelected(InputFileChangeEventArgs e)
+    {
+        refillHistoryFile = e.File;
+        SetStatus($"已选择补货历史文件: {refillHistoryFile.Name}", true);
+    }
+
+    private async Task DetectMachines()
+    {
+        if (transactionFile == null) return;
+
+        try
+        {
+            IsLoading = true;
+            SetStatus("正在检测机器...", true);
+
+            var machines = await CalculationService.GetMachinesFromTransactionStreamAsync(transactionFile);
+
+            MachineRefillSettings.Clear();
+            foreach (var machine in machines)
+            {
+                MachineRefillSettings.Add(new MachineRefillSetting
+                {
+                    MachineName = machine,
+                    RefillDate = DateTime.Today,
+                    RefillTime = new TimeSpan(9, 0, 0)
+                });
+            }
+
+            SetStatus($"检测到 {machines.Count} 台机器", true);
+
+            // 如果有补货历史文件，自动应用历史时间
+            if (refillHistoryFile != null)
+            {
+                await ApplyHistoryTimes();
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"检测机器失败: {ex.Message}", false);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task ApplyHistoryTimes()
+    {
+        if (refillHistoryFile == null || !MachineRefillSettings.Any()) return;
+
+        try
+        {
+            IsLoading = true;
+            SetStatus("正在应用历史补货时间...", true);
+
+            var historyData = await CalculationService.GetLastRefillTimesFromHistoryStreamAsync(refillHistoryFile);
+
+            foreach (var setting in MachineRefillSettings)
+            {
+                if (historyData.TryGetValue(setting.MachineName, out var historyTime))
+                {
+                    setting.RefillDate = historyTime.Date;
+                    setting.RefillTime = historyTime.TimeOfDay;
+                }
+            }
+
+            SetStatus("已应用历史补货时间", true);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"应用历史时间失败: {ex.Message}", false);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void SetAllTime(int hour, int minute, int second)
+    {
+        var time = new TimeSpan(hour, minute, second);
+        foreach (var setting in MachineRefillSettings)
+        {
+            setting.RefillTime = time;
+        }
+        SetStatus($"已将所有机器补货时间设置为 {hour:D2}:{minute:D2}:{second:D2}", true);
+    }
+
+    private async Task CalculateRefillQuantities()
+    {
+        if (transactionFile == null || !MachineRefillSettings.Any()) return;
+
+        try
+        {
+            IsLoading = true;
+            SetStatus("正在计算补货数量...", true);
+
+            var machineDict = MachineRefillSettings.ToDictionary(s => s.MachineName, s => s);
+            var results = await CalculationService.CalculateRefillNeedsAsync(transactionFile, machineDict);
+
+            CalculationResults.Clear();
+            foreach (var result in results)
+            {
+                CalculationResults.Add(result);
+            }
+
+            SetStatus($"计算完成！共 {results.Count} 种产品需要补货", true);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"计算失败: {ex.Message}", false);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void OnManualAdjustmentChanged(RefillCalculationResult result, ChangeEventArgs e)
+    {
+        var inputValue = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(inputValue))
+        {
+            // 空值默认为0
+            result.ManualAdjustment = 0;
+            result.Recalculate();
+        }
+        else if (int.TryParse(inputValue, out var value))
+        {
+            result.ManualAdjustment = value; // 允许负数输入
+            result.Recalculate();
+        }
+    }
+
+    private async Task CopyTableToClipboard()
+    {
+        try
+        {
+            var csvContent = "产品名称,基础补货,智能调整,手动调整,总计,箱数,余件,箱规,最大容量\n";
+            foreach (var result in CalculationResults)
+            {
+                csvContent += $"{result.ProductName},{result.TotalSales},{result.SmartAdjustment},{result.ManualAdjustment},{result.FinalRecommendation},{result.BoxesToTake},{result.RemainingPieces},{result.BoxSize},{result.MaxCapacity}\n";
+            }
+            
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", csvContent);
+            SetStatus("表格数据已复制到剪贴板", true);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"复制失败: {ex.Message}", false);
+        }
+    }
+
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            IsLoading = true;
+            SetStatus("正在导出Excel...", true);
+
+            // 创建基本的Excel导出
+            using var package = new ExcelPackage();
+            var worksheet = package.Workbook.Worksheets.Add("补货计算结果");
+
+            var headers = new[] { "产品名称", "基础补货", "智能调整", "手动调整", "总计", "箱数", "余件", "箱规", "最大容量" };
+            for (int i = 0; i < headers.Length; i++)
+            {
+                worksheet.Cells[1, i + 1].Value = headers[i];
+            }
+
+            for (int i = 0; i < CalculationResults.Count; i++)
+            {
+                var result = CalculationResults[i];
+                int row = i + 2;
+
+                worksheet.Cells[row, 1].Value = result.ProductName;
+                worksheet.Cells[row, 2].Value = result.TotalSales;
+                worksheet.Cells[row, 3].Value = result.SmartAdjustment;
+                worksheet.Cells[row, 4].Value = result.ManualAdjustment;
+                worksheet.Cells[row, 5].Value = result.FinalRecommendation;
+                worksheet.Cells[row, 6].Value = result.BoxesToTake;
+                worksheet.Cells[row, 7].Value = result.RemainingPieces;
+                worksheet.Cells[row, 8].Value = result.BoxSize;
+                worksheet.Cells[row, 9].Value = result.MaxCapacity;
+            }
+
+            // 格式化表头
+            using (var range = worksheet.Cells[1, 1, 1, headers.Length])
+            {
+                range.Style.Font.Bold = true;
+                range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                range.Style.Fill.BackgroundColor.SetColor(Color.LightGray);
+            }
+
+            // 自动调整列宽
+            worksheet.Cells.AutoFitColumns();
+
+            var fileBytes = package.GetAsByteArray();
+            var fileName = $"补货计算结果_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+
+            await JS.InvokeVoidAsync("downloadFile", fileName, Convert.ToBase64String(fileBytes));
+            SetStatus("Excel文件已导出", true);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"导出失败: {ex.Message}", false);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void ResetAll()
+    {
+        transactionFile = null;
+        refillHistoryFile = null;
+        MachineRefillSettings.Clear();
+        CalculationResults.Clear();
+        StatusMessage = "";
+        SetStatus("已重置所有数据", true);
+    }
+
+    private void SetStatus(string message, bool isSuccess)
+    {
+        StatusMessage = message;
+        StatusMessageClass = isSuccess ? "alert-success" : "alert-danger";
+        StateHasChanged();
+    }
+}
+
+<style>
+/* 全局字体设置 - 参照图2样式 */
+.smart-refill-container {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+}
+
+/* 页面标题 */
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.page-title {
+    font-size: 1.8rem;
+    font-weight: 600;
+    color: #333;
+    margin: 0;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.debug-toggle label {
+    font-size: 0.85rem;
+    margin-left: 5px;
+    color: #666;
+}
+
+/* 区域标题 */
+.section-title {
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #333;
+    margin: 0 0 20px 0;
+}
+
+/* 使用说明 */
+.usage-instructions {
+    background: #e3f2fd;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 25px;
+}
+
+.instructions-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1976d2;
+    margin: 0 0 12px 0;
+}
+
+.instructions-list {
+    margin: 0;
+    padding-left: 20px;
+    color: #333;
+}
+
+.instructions-list li {
+    font-size: 0.9rem;
+    margin-bottom: 5px;
+}
+
+/* 文件上传样式 */
+.file-upload-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.file-label {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #333;
+}
+
+.file-input-text {
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.file-input-button {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.file-status {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-top: 8px;
+}
+
+.file-description {
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 5px;
+}
+
+/* 检测机器按钮 */
+.btn-detect-machines {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.detect-description {
+    font-size: 0.85rem;
+    color: #666;
+    margin-top: 8px;
+}
+
+/* 机器检测结果 - 按照图片样式设计 */
+.machines-detected-section {
+    margin: 25px 0;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    border: 2px solid #f0ad4e;
+}
+
+.machines-status {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #2e7d32;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.machine-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.machine-badge {
+    background: #007bff;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+/* 补货时间设置 - 按照图片样式 */
+.refill-time-section {
+    margin: 25px 0;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    border: 2px solid #f0ad4e;
+}
+
+.time-section-header {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.step-number {
+    background: #f0ad4e;
+    color: white;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.required {
+    color: #e53e3e;
+}
+
+.time-description {
+    color: #666;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.btn-apply-history {
+    background: #00acc1;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.btn-apply-history:hover {
+    background: #0097a7;
+}
+
+.quick-time-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-quick-time {
+    background: white;
+    color: #007bff;
+    border: 1px solid #007bff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.btn-quick-time:hover {
+    background: #007bff;
+    color: white;
+}
+
+.machines-time-grid {
+    display: grid;
+    gap: 20px;
+}
+
+.machine-time-card {
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.machine-time-name {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #007bff;
+    margin-bottom: 15px;
+}
+
+.time-input-group {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 10px;
+}
+
+.input-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.input-section label {
+    font-size: 0.9rem;
+    color: #666;
+    font-weight: 600;
+}
+
+.date-input,
+.time-input {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+.time-now-btn {
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    margin-left: 8px;
+}
+
+.time-confirm {
+    color: #2e7d32;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+/* 计算完成提示 - 按照图片样式 */
+.calculation-complete-section {
+    margin: 25px 0;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    border: 2px solid #f0ad4e;
+    color: #2e7d32;
+    font-weight: 600;
+    font-size: 1.1rem;
+    text-align: left;
+}
+
+/* 计算按钮 */
+.calculate-section {
+    text-align: center;
+    margin: 30px 0;
+}
+
+.btn-calculate {
+    background: #388e3c;
+    color: white;
+    border: none;
+    padding: 15px 40px;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.btn-calculate:hover:not(:disabled) {
+    background: #2e7d32;
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+}
+
+.btn-calculate:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+/* 补货结果表格样式 - 完全按照第二张图设计 */
+.refill-results-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #e0e0e0;
+    background: white;
+    font-size: 0.9rem;
+}
+
+.refill-results-table thead th {
+    background: #e3f2fd;
+    color: #1976d2;
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 12px 8px;
+    border: none;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.refill-results-table tbody tr {
+    background: white;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.refill-results-table tbody tr:nth-child(even) {
+    background: #f8f9fa;
+}
+
+.refill-results-table tbody tr:hover {
+    background: #f0f8ff;
+}
+
+.refill-results-table td {
+    padding: 10px 8px;
+    font-size: 0.9rem;
+    border: none;
+    vertical-align: middle;
+}
+
+/* 产品名称列 */
+.refill-results-table .product-name {
+    font-weight: 600;
+    color: #333;
+    text-align: left;
+    padding-left: 12px;
+}
+
+/* 基础补货列 - 蓝色 */
+.refill-results-table .basic-refill {
+    color: #1976d2;
+    font-weight: 600;
+}
+
+/* 智能调整列 - 橙色 */
+.refill-results-table .smart-adjustment {
+    color: #f57c00;
+    font-weight: 600;
+}
+
+/* 手动调整列 */
+.refill-results-table .manual-adjustment {
+    padding: 8px;
+}
+
+.refill-results-table .manual-input {
+    width: 60px;
+    margin: 0 auto;
+    text-align: center;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+    color: #00acc1;
+    font-weight: 600;
+}
+
+.refill-results-table .manual-input:focus {
+    border-color: #00acc1;
+    box-shadow: 0 0 0 2px rgba(0, 172, 193, 0.2);
+    outline: none;
+}
+
+/* 总计列 - 绿色 */
+.refill-results-table .total-recommendation {
+    color: #388e3c;
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+/* 总计行样式 */
+.refill-results-table .totals-row {
+    background: #e8f5e8 !important;
+    border-top: 2px solid #4caf50;
+    font-weight: 700;
+}
+
+.refill-results-table .totals-row:hover {
+    background: #e8f5e8 !important;
+}
+
+.refill-results-table .totals-label {
+    color: #2e7d32;
+    font-weight: 700;
+    padding-left: 12px;
+}
+
+.refill-results-table .basic-refill-total {
+    color: #1976d2;
+    font-weight: 700;
+}
+
+.refill-results-table .smart-adjustment-total {
+    color: #f57c00;
+    font-weight: 700;
+}
+
+.refill-results-table .manual-adjustment-total {
+    color: #00acc1;
+    font-weight: 700;
+}
+
+.refill-results-table .total-recommendation-total {
+    color: #388e3c;
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+/* 统计卡片样式 */
+.stats-cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.stat-card {
+    text-align: center;
+    padding: 20px 15px;
+    border-radius: 8px;
+    border: 2px solid #e0e0e0;
+    background: white;
+}
+
+.basic-refill-card {
+    border-color: #1976d2;
+}
+
+.smart-adjustment-card {
+    border-color: #f57c00;
+}
+
+.manual-adjustment-card {
+    border-color: #00acc1;
+}
+
+.total-refill-card {
+    border-color: #388e3c;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 5px;
+}
+
+.basic-refill-card .stat-number {
+    color: #1976d2;
+}
+
+.smart-adjustment-card .stat-number {
+    color: #f57c00;
+}
+
+.manual-adjustment-card .stat-number {
+    color: #00acc1;
+}
+
+.total-refill-card .stat-number {
+    color: #388e3c;
+}
+
+.stat-label {
+    font-size: 0.9rem;
+    color: #666;
+    font-weight: 600;
+}
+
+/* 产品名称和最大容量 */
+.product-main-name {
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 3px;
+}
+
+.max-capacity-text {
+    font-size: 0.75rem;
+    color: #999;
+    font-weight: normal;
+}
+
+/* 容量超限样式 */
+.over-capacity-row {
+    background-color: #fff5f5 !important;
+}
+
+.over-capacity-input {
+    border-color: #e53e3e !important;
+    background-color: #fed7d7;
+}
+
+.over-capacity-total {
+    color: #e53e3e !important;
+    font-weight: 700;
+}
+
+.capacity-warning {
+    font-size: 0.7rem;
+    color: #e53e3e;
+    margin-top: 3px;
+    text-align: center;
+}
+
+@@media (max-width: 768px) {
+    .stats-cards {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+    
+    .stat-card {
+        padding: 15px 10px;
+    }
+    
+    .stat-number {
+        font-size: 1.5rem;
+    }
+}
+</style>
+

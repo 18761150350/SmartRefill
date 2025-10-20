@@ -1,0 +1,27 @@
+/*!
+ * Bootstrap Icons v1.11.3 (https://icons.getbootstrap.com/)
+ * Copyright 2019-2024 The Bootstrap Authors
+ * Licensed under the MIT License (https://github.com/twbs/icons/blob/main/LICENSE)
+ */
+
+@font-face {
+  font-family: "bootstrap-icons";
+  src: url("fonts/bootstrap-icons.woff2?v=1.11.3") format("woff2"),
+url("fonts/bootstrap-icons.woff?v=1.11.3") format("woff");
+}
+
+.bi::before,
+[class^="bi-"]::before,
+[class*=" bi-"]::before {
+  display: inline-block;
+  font-family: bootstrap-icons !important;
+  font-style: normal !important;
+  font-weight: normal !important;
+  font-variant: normal !important;
+  text-transform: none !important;
+  line-height: 1;
+  vertical-align: -.125em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* ... thousands of lines of bootstrap icon css ... */ 

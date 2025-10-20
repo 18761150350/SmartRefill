@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>智能补货计算系统</title>
+    <base href="/" />
+    <link href="css/bootstrap/bootstrap.min.css" rel="stylesheet" />
+    <link href="css/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet" />
+    <link href="css/app.css" rel="stylesheet" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="SmartRefillWasm.styles.css" rel="stylesheet" />
+    <script>
+        // 强制清除浏览器缓存
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for(let registration of registrations) {
+                    registration.unregister();
+                }
+            });
+        }
+        
+        // 全局错误监听器
+        window.onerror = function (message, source, lineno, colno, error) {
+            var errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:red;color:white;padding:10px;font-size:18px;z-index:9999;';
+            errorDiv.innerHTML = '<strong>JavaScript Error:</strong><br>' +
+                'Message: ' + message + '<br>' +
+                'Source: ' + source + ':' + lineno;
+            document.body.appendChild(errorDiv);
+            return true; // 阻止默认的浏览器错误处理
+        };
+
+        window.downloadFileFromStream = (fileName, contentStreamReference) => {
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(new Blob([contentStreamReference]));
+            link.href = url;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        };
+
+        window.downloadFile = (fileName, base64String) => {
+            const link = document.createElement('a');
+            link.href = 'data:application/octet-stream;base64,' + base64String;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+    </script>
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        发生了一个未处理的错误。
+        <a href="" class="reload">重新加载</a>
+        <a class="dismiss">🗙</a>
+    </div>
+    <script src="app.js"></script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>
