@@ -1,0 +1,19 @@
+name: Skills CI Sandbox
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/skills-sandbox-20260211
+
+jobs:
+  sandbox-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Intentional failure for GH Fix CI test
+        run: |
+          echo "This failure is intentional for Skills CI testing."
+          exit 1
