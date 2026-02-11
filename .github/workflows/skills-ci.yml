@@ -1,0 +1,25 @@
+name: Skills CI Sandbox
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/skills-sandbox-20260211
+
+jobs:
+  sandbox-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore SmartRefillWasm.csproj
+
+      - name: Build
+        run: dotnet build SmartRefillWasm.csproj --configuration Release --no-restore
