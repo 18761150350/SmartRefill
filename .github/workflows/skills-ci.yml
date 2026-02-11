@@ -13,7 +13,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Intentional failure for GH Fix CI test
-        run: |
-          echo "This failure is intentional for Skills CI testing."
-          exit 1
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore SmartRefillWasm.csproj
+
+      - name: Build
+        run: dotnet build SmartRefillWasm.csproj --configuration Release --no-restore
